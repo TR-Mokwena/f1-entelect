@@ -1,17 +1,8 @@
-"""
-Entelect Grand Prix - Level 1 Solver
-Optimizes: target speed per straight, braking point, tyre compound selection
-No fuel limits, no tyre degradation in Level 1.
-"""
-
 import json
 import math
 import sys
 from copy import deepcopy
 
-# ─────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────
 GRAVITY = 9.8
 K_STRAIGHT = 0.0000166
 K_BRAKING  = 0.0398
@@ -35,18 +26,12 @@ WEATHER_KEY_MAP = {
 }
 
 
-# ─────────────────────────────────────────────
-# Physics helpers
-# ─────────────────────────────────────────────
-
 def accel_distance(vi, vf, a):
-    """Distance to accelerate from vi to vf at rate a."""
     if a == 0:
         return 0.0
     return (vf**2 - vi**2) / (2 * a)
 
 def accel_time(vi, vf, a):
-    """Time to change speed from vi to vf at rate a."""
     if a == 0:
         return 0.0
     return (vf - vi) / a
@@ -66,69 +51,31 @@ def max_corner_speed(friction, radius, crawl_speed):
     return math.sqrt(friction * GRAVITY * radius) + crawl_speed
 
 
-# ─────────────────────────────────────────────
-# Straight segment simulation
-# ─────────────────────────────────────────────
-
 def simulate_straight(seg, entry_speed, target_speed, brake_start_m_before_next,
                       accel, brake, max_speed, crawl_speed, corner_entry_speed_needed):
-    """
-    Simulate a straight segment.
-    Returns: (exit_speed, time, valid)
-    
-    The straight has length L.
-    - Car enters at entry_speed
-    - Accelerates to min(target_speed, max_speed)
-    - Holds that speed until brake_start_m_before_next from the end
-    - Brakes from there to corner_entry_speed_needed
-    
-    If target_speed < entry_speed, car just continues at entry_speed (assumption 11).
-    """
     L = seg["length_m"]
-    effective_target = max(target_speed, entry_speed)  # assumption 11
+    effective_target = max(target_speed, entry_speed)
     effective_target = min(effective_target, max_speed)
 
-    # Phase 1: accelerate from entry_speed to effective_target
     d_accel = accel_distance(entry_speed, effective_target, accel)
     if d_accel > L:
-        # Can't reach target speed — find actual speed at end of straight before braking
-        # We'll compute how fast we get and see if we can still brake in time
-        # Actually: first check if we need to brake at all
-        # Speed after accelerating entire straight
+        # straight is too short to reach target — just accelerate the whole way
         vf_no_brake = math.sqrt(entry_speed**2 + 2 * accel * L)
         vf_no_brake = min(vf_no_brake, max_speed)
-        # Check if we can brake to corner speed from here — but this straight is done
-        # For braking: it happens AT the end of this straight (brake_start_m = 0)
-        # We'll just return this speed as exit, let caller handle it
-        # Time: entire straight is acceleration
         t = accel_time(entry_speed, vf_no_brake, accel) if vf_no_brake > entry_speed else (L / entry_speed if entry_speed > 0 else float('inf'))
         return vf_no_brake, t, True
 
-    # Phase 2: cruise at effective_target
-    d_brake = accel_distance(corner_entry_speed_needed, effective_target, brake)  # distance to brake from target to corner speed
-    
-    # Brake start is measured from the end of the straight
-    # We place the braking point at brake_start_m_before_next from segment end
-    brake_start_pos = L - brake_start_m_before_next  # position from start of straight
+    d_brake = accel_distance(corner_entry_speed_needed, effective_target, brake)
+    brake_start_pos = L - brake_start_m_before_next
 
-    # Validate: enough room to brake?
     if d_brake > brake_start_m_before_next:
-        # Not enough braking distance — car will enter corner too fast
-        # We'll flag this but still compute time (penalty applied by grader)
         pass
 
-    # Compute positions of each phase:
-    # [0 .. d_accel]: accelerate
-    # [d_accel .. brake_start_pos]: cruise
-    # [brake_start_pos .. L]: brake
-
     t_accel = accel_time(entry_speed, effective_target, accel) if effective_target > entry_speed else 0.0
-    
+
     d_cruise = brake_start_pos - d_accel
     if d_cruise < 0:
-        # Braking starts before we even finish accelerating
-        # Car accelerates for d_accel then brakes immediately
-        # Find speed at brake_start_pos
+        # brake point lands inside the acceleration zone — skip cruise, go straight to braking
         speed_at_brake = math.sqrt(entry_speed**2 + 2 * accel * brake_start_pos)
         speed_at_brake = min(speed_at_brake, max_speed)
         t_accel2 = accel_time(entry_speed, speed_at_brake, accel)
@@ -147,20 +94,11 @@ def simulate_straight(seg, entry_speed, target_speed, brake_start_m_before_next,
     return exit_speed, total_time, True
 
 
-# ─────────────────────────────────────────────
-# Corner simulation
-# ─────────────────────────────────────────────
-
 def simulate_corner(seg, entry_speed, friction, crawl_speed, crash_penalty):
-    """
-    Returns (exit_speed, time, crashed)
-    Corner speed is constant throughout.
-    """
     max_speed_corner = max_corner_speed(friction, seg["radius_m"], crawl_speed)
     crashed = entry_speed > max_speed_corner + 1e-6
 
     if crashed:
-        # Car travels at crawl speed
         t = time_at_constant(seg["length_m"], crawl_speed)
         return crawl_speed, t + crash_penalty, True
     else:
@@ -168,28 +106,7 @@ def simulate_corner(seg, entry_speed, friction, crawl_speed, crash_penalty):
         return entry_speed, t, False
 
 
-# ─────────────────────────────────────────────
-# Full race simulation
-# ─────────────────────────────────────────────
-
 def simulate_race(level, strategy):
-    """
-    Simulate the full race with a given strategy.
-    strategy: {
-        "initial_tyre_id": int,
-        "laps": [
-            {
-                "lap": int,
-                "segments": [
-                    {"id": int, "type": "straight", "target_m/s": float, "brake_start_m_before_next": float}
-                    {"id": int, "type": "corner"}
-                ],
-                "pit": {"enter": bool, ...}
-            }
-        ]
-    }
-    Returns total_time, list of segment times, crash_count
-    """
     car = level["car"]
     accel = car["accel_m/se2"]
     brake_rate = car["brake_m/se2"]
@@ -199,7 +116,6 @@ def simulate_race(level, strategy):
     crash_penalty = level["race"]["corner_crash_penalty_s"]
     pit_exit_speed = level["race"]["pit_exit_speed_m/s"]
 
-    # Resolve tyre
     initial_tyre_id = strategy["initial_tyre_id"]
     compound = get_compound(level, initial_tyre_id)
     weather = get_weather_at_time(level, 0)
@@ -211,7 +127,7 @@ def simulate_race(level, strategy):
     seg_map = {s["id"]: s for s in segments}
 
     total_time = 0.0
-    current_speed = 0.0  # race starts at 0
+    current_speed = 0.0
     crashes = 0
     in_crawl = False
 
@@ -220,13 +136,11 @@ def simulate_race(level, strategy):
 
         for i, seg_action in enumerate(lap_segs):
             seg = seg_map[seg_action["id"]]
-            
+
             if seg["type"] == "straight":
                 target = seg_action.get("target_m/s", max_speed)
                 brake_start = seg_action.get("brake_start_m_before_next", 0)
 
-                # Determine the next corner's required entry speed
-                # Look ahead for the next corner
                 next_corner_entry = _next_corner_max_speed(
                     lap_segs, i, seg_map, friction, crawl_speed)
 
@@ -239,10 +153,7 @@ def simulate_race(level, strategy):
                 total_time += t
 
             elif seg["type"] == "corner":
-                if in_crawl:
-                    entry = crawl_speed
-                else:
-                    entry = current_speed
+                entry = crawl_speed if in_crawl else current_speed
 
                 exit_speed, t, crashed = simulate_corner(
                     seg, entry, friction, crawl_speed, crash_penalty)
@@ -256,13 +167,11 @@ def simulate_race(level, strategy):
                 current_speed = exit_speed
                 total_time += t
 
-        # Pit stop
         pit = lap_data.get("pit", {})
         if pit.get("enter", False):
             pit_time = level["race"]["base_pit_stop_time_s"]
             if pit.get("tyre_change_set_id"):
                 pit_time += level["race"]["pit_tyre_swap_time_s"]
-                # Update tyre
                 new_id = pit["tyre_change_set_id"]
                 compound = get_compound(level, new_id)
                 tyre_props = level["tyres"]["properties"][compound]
@@ -277,11 +186,7 @@ def simulate_race(level, strategy):
 
 
 def _next_corner_max_speed(lap_segs, current_idx, seg_map, friction, crawl_speed):
-    """
-    Find the required entry speed for consecutive corners after this straight.
-    Since there's no braking between chained corners, must enter at the minimum
-    max speed across all consecutive corners until the next straight.
-    """
+    # chained corners share no braking room between them — must enter at the tightest limit
     speeds = []
     j = current_idx + 1
     while j < len(lap_segs):
@@ -303,11 +208,9 @@ def get_compound(level, tyre_id):
 
 def get_weather_at_time(level, race_time):
     conditions = level["weather"]["conditions"]
-    # Find starting condition
     start_id = level["race"].get("starting_weather_condition_id", 1)
-    # Find index of starting condition
     start_idx = next((i for i, c in enumerate(conditions) if c["id"] == start_id), 0)
-    
+
     t = 0.0
     idx = start_idx
     while True:
@@ -318,41 +221,17 @@ def get_weather_at_time(level, race_time):
         idx += 1
 
 
-# ─────────────────────────────────────────────
-# Strategy optimizer
-# ─────────────────────────────────────────────
-
 def compute_optimal_brake_start(seg, entry_speed, target_speed, corner_entry_speed,
                                  accel, brake_rate, max_speed, crawl_speed):
-    """
-    Compute the optimal braking point: brake as late as possible while still
-    slowing to the required corner entry speed.
-    Returns brake_start_m_before_next (from end of segment).
-    
-    The car accelerates to effective_target first, then cruises, then brakes.
-    We need to find what speed the car is actually at when it reaches the
-    brake_start_pos, and ensure it can decelerate to corner_entry_speed.
-    """
     L = seg["length_m"]
     effective_target = min(max(target_speed, entry_speed), max_speed)
-
-    # Apply a tiny safety margin to avoid floating point crashes
-    safe_corner_speed = corner_entry_speed - 0.001
-
-    # Distance to brake from effective_target to safe_corner_speed
+    safe_corner_speed = corner_entry_speed - 0.001  # tiny margin to avoid floating-point corner crashes
     d_brake = accel_distance(safe_corner_speed, effective_target, brake_rate)
-    # Clamp to segment length
     d_brake = min(d_brake, L)
     return d_brake
 
 
 def build_optimal_strategy(level):
-    """
-    Build the optimal Level 1 strategy:
-    1. Pick tyre with highest friction for the weather (dry -> Soft)
-    2. For each straight: target = max_speed, brake as late as possible
-    3. No pit stops needed (tyres don't degrade in L1)
-    """
     car = level["car"]
     accel = car["accel_m/se2"]
     brake_rate = car["brake_m/se2"]
@@ -360,7 +239,6 @@ def build_optimal_strategy(level):
     crawl_speed = car["crawl_constant_m/s"]
     num_laps = level["race"]["laps"]
 
-    # Pick best tyre for weather
     weather = get_weather_at_time(level, 0)
     friction_key = WEATHER_KEY_MAP[weather][0]
     best_tyre_id, best_compound, best_friction = None, None, -1
@@ -368,9 +246,7 @@ def build_optimal_strategy(level):
     for tyre_set in level["tyres"]["available_sets"]:
         compound = tyre_set["compound"]
         props = level["tyres"]["properties"][compound]
-        base = BASE_FRICTION[compound]
-        multiplier = props[friction_key]
-        f = base * multiplier  # no degradation in L1
+        f = BASE_FRICTION[compound] * props[friction_key]
         if f > best_friction:
             best_friction = f
             best_compound = compound
@@ -381,7 +257,6 @@ def build_optimal_strategy(level):
     segments = level["track"]["segments"]
     seg_map = {s["id"]: s for s in segments}
 
-    # Pre-compute max corner speeds for each corner
     corner_max = {}
     for seg in segments:
         if seg["type"] == "corner":
@@ -391,29 +266,22 @@ def build_optimal_strategy(level):
     for sid, spd in corner_max.items():
         print(f"  Seg {sid}: {spd:.2f} m/s")
 
-    # Build lap template
     def build_lap(lap_num, entry_speed_override=None):
         lap_segments = []
         current_speed = entry_speed_override if entry_speed_override is not None else 0.0
-        
+
         for i, seg in enumerate(segments):
             if seg["type"] == "straight":
-                # Find the required exit speed.
-                # After this straight, there may be a chain of consecutive corners with
-                # NO straight between them. The car cannot brake between chained corners,
-                # so we must enter the entire chain at the MINIMUM max speed across all of them.
-                next_corner_speed = 0.0
-                j = i + 1
-                # Walk forward: collect all consecutive corners until the next straight
+                # consecutive corners share no braking room — must enter at the tightest limit
                 chain_speeds = []
+                j = i + 1
                 while j < len(segments):
                     if segments[j]["type"] == "corner":
                         chain_speeds.append(corner_max[segments[j]["id"]])
                         j += 1
                     else:
-                        break  # hit a straight, stop
-                if chain_speeds:
-                    next_corner_speed = min(chain_speeds)  # must enter entire chain at this speed
+                        break
+                next_corner_speed = min(chain_speeds) if chain_speeds else 0.0
 
                 brake_start = compute_optimal_brake_start(
                     seg, current_speed, max_speed, next_corner_speed,
@@ -425,8 +293,6 @@ def build_optimal_strategy(level):
                     "target_m/s": max_speed,
                     "brake_start_m_before_next": round(brake_start, 4)
                 })
-                # Update current speed for next segment tracking
-                # After braking on straight, exit at next_corner_speed
                 current_speed = next_corner_speed
 
             elif seg["type"] == "corner":
@@ -434,14 +300,12 @@ def build_optimal_strategy(level):
                     "id": seg["id"],
                     "type": "corner"
                 })
-                # Speed stays constant through corner
-                # current_speed unchanged (car enters and exits at same speed)
 
         return lap_segments
 
     laps = []
     for lap_num in range(1, num_laps + 1):
-        entry = 0.0 if lap_num == 1 else None  # after lap 1, speed carries over from last corner
+        entry = 0.0 if lap_num == 1 else None  # lap 1 starts stationary; later laps carry exit speed from the last corner
         lap_segs = build_lap(lap_num, entry_speed_override=entry)
         laps.append({
             "lap": lap_num,
@@ -454,10 +318,6 @@ def build_optimal_strategy(level):
         "laps": laps
     }
 
-
-# ─────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────
 
 def main():
     input_file = sys.argv[1] if len(sys.argv) > 1 else "level1.json"
@@ -488,7 +348,6 @@ def main():
         f.write(output)
     print(f"\nSubmission written to {output_file}")
 
-    # Pretty-print strategy summary
     print("\n=== Strategy Summary ===")
     for lap in strategy["laps"]:
         print(f"\nLap {lap['lap']}:")

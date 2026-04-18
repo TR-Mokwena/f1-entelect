@@ -1,22 +1,8 @@
-"""
-Entelect Grand Prix - Level 3 Solver
-Extends Level 2 with:
-  - Real-time weather tracking (weather changes mid-race by time)
-  - Weather affects: accel, brake, tyre friction multiplier
-  - Best tyre compound changes per weather window
-  - Pit strategy accounts for weather-driven tyre changes
-  - Braking points adjusted per weather (accel/brake multipliers)
-  - No tyre degradation yet (that's Level 4)
-"""
-
 import json
 import math
 import sys
 from copy import deepcopy
 
-# ─────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────
 GRAVITY    = 9.8
 K_BASE     = 0.0005
 K_DRAG     = 0.0000000015
@@ -44,15 +30,7 @@ BEST_TYRE_FOR_WEATHER = {
 }
 
 
-# ─────────────────────────────────────────────
-# Weather helpers
-# ─────────────────────────────────────────────
-
 def build_weather_timeline(level):
-    """
-    Returns a list of (start_time, end_time, condition_dict) covering the full race.
-    Weather cycles if race outlasts all conditions.
-    """
     conditions = level["weather"]["conditions"]
     start_id   = level["race"].get("starting_weather_condition_id", 1)
     start_idx  = next((i for i, c in enumerate(conditions) if c["id"] == start_id), 0)
@@ -60,7 +38,6 @@ def build_weather_timeline(level):
     timeline = []
     t = 0.0
     idx = start_idx
-    # Build enough windows to cover a very long race (e.g. 10 cycles)
     for _ in range(len(conditions) * 20):
         c = conditions[idx % len(conditions)]
         timeline.append((t, t + c["duration_s"], c))
@@ -72,7 +49,6 @@ def build_weather_timeline(level):
 
 
 def get_weather_at(timeline, race_time):
-    """Return condition dict active at race_time."""
     for start, end, cond in timeline:
         if start <= race_time < end:
             return cond
@@ -93,23 +69,17 @@ def max_corner_speed(friction, radius, crawl_speed):
     return math.sqrt(max(0.0, friction * GRAVITY * radius)) + crawl_speed
 
 def best_tyre_for_weather(weather_name, level, used_ids=None):
-    """Return (compound, tyre_id) with highest friction for this weather."""
     friction_key = WEATHER_KEY_MAP[weather_name][0]
     best_id, best_compound, best_f = None, None, -1
     for tyre_set in level["tyres"]["available_sets"]:
         compound = tyre_set["compound"]
         props    = level["tyres"]["properties"][compound]
         f = BASE_FRICTION[compound] * props[friction_key]
-        # pick first available id not in used_ids
         available = [i for i in tyre_set["ids"] if used_ids is None or i not in used_ids]
         if available and f > best_f:
             best_f, best_compound, best_id = f, compound, available[0]
     return best_compound, best_id, best_f
 
-
-# ─────────────────────────────────────────────
-# Physics helpers
-# ─────────────────────────────────────────────
 
 def accel_distance(vi, vf, a):
     if a == 0:
@@ -126,6 +96,7 @@ def fuel_used_seg(vi, vf, distance):
     return (K_BASE + K_DRAG * avg**2) * distance
 
 def chain_min_corner_speed_fn(segments, start_idx, corner_max_map):
+    # chained corners share no braking room — must enter at the tightest limit
     speeds = []
     j = start_idx
     while j < len(segments) and segments[j]["type"] == "corner":
@@ -135,18 +106,13 @@ def chain_min_corner_speed_fn(segments, start_idx, corner_max_map):
 
 def compute_brake_start(seg, target_speed, corner_entry_speed, accel, brake_rate, max_speed, entry_speed=0):
     effective_target = min(max(target_speed, entry_speed), max_speed)
-    safe_corner      = max(0.0, corner_entry_speed - 0.001)
+    safe_corner      = max(0.0, corner_entry_speed - 0.001)  # tiny margin to avoid floating-point crashes
     d_brake          = accel_distance(safe_corner, effective_target, brake_rate)
     return min(d_brake, seg["length_m"])
 
 
-# ─────────────────────────────────────────────
-# Straight simulation
-# ─────────────────────────────────────────────
-
 def simulate_straight_seg(seg, entry_speed, target_speed, brake_start_m,
                            accel, brake_rate, max_speed):
-    """Returns (exit_speed, time, fuel_used)."""
     L = seg["length_m"]
     effective_target = min(max(target_speed, entry_speed), max_speed)
 
@@ -163,6 +129,7 @@ def simulate_straight_seg(seg, entry_speed, target_speed, brake_start_m,
     d_brake_actual = brake_start_m
 
     if brake_pos <= d_accel:
+        # brake point lands inside the acceleration zone — skip cruise, go straight to braking
         spd_at_bp = math.sqrt(max(0, entry_speed**2 + 2 * accel * brake_pos))
         spd_at_bp = min(spd_at_bp, max_speed)
         exit_spd  = math.sqrt(max(0, spd_at_bp**2 - 2 * brake_rate * (L - brake_pos)))
@@ -184,10 +151,6 @@ def simulate_straight_seg(seg, entry_speed, target_speed, brake_start_m,
     return exit_spd, t, f
 
 
-# ─────────────────────────────────────────────
-# Full race simulation
-# ─────────────────────────────────────────────
-
 def simulate_race(level, strategy, verbose=False):
     car           = level["car"]
     max_speed     = car["max_speed_m/s"]
@@ -201,7 +164,6 @@ def simulate_race(level, strategy, verbose=False):
     segments = level["track"]["segments"]
     seg_map  = {s["id"]: s for s in segments}
 
-    # Initial tyre
     current_tyre_id = strategy["initial_tyre_id"]
     compound        = get_compound(level, current_tyre_id)
 
@@ -287,7 +249,6 @@ def simulate_race(level, strategy, verbose=False):
                           f"friction={friction:.3f} entry={entry_speed:.2f} max={max_c:.2f} "
                           f"{status} t={t:.2f}s f={f:.4f}L rem={fuel_remaining:.3f}L")
 
-        # ── Pit stop ──
         pit = lap_data.get("pit", {})
         if pit.get("enter", False):
             pit_time = level["race"]["base_pit_stop_time_s"]
@@ -303,7 +264,7 @@ def simulate_race(level, strategy, verbose=False):
                 pit_time       += refuel / level["race"]["pit_refuel_rate_l/s"]
                 fuel_remaining  = min(fuel_remaining + refuel, tank_cap)
 
-            in_limp       = False
+            in_limp       = False  # pitting resets limp mode
             total_time   += pit_time
             current_speed = pit_exit_spd
 
@@ -314,10 +275,6 @@ def simulate_race(level, strategy, verbose=False):
     return total_time, total_fuel_used, crashes
 
 
-# ─────────────────────────────────────────────
-# Scoring
-# ─────────────────────────────────────────────
-
 def score_level3(level, total_time, total_fuel):
     ref = level["race"]["time_reference_s"]
     cap = level["race"]["fuel_soft_cap_limit_l"]
@@ -326,10 +283,6 @@ def score_level3(level, total_time, total_fuel):
     return base, bonus, base + bonus
 
 
-# ─────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────
-
 def get_compound(level, tyre_id):
     for tyre_set in level["tyres"]["available_sets"]:
         if tyre_id in tyre_set["ids"]:
@@ -337,44 +290,25 @@ def get_compound(level, tyre_id):
     raise ValueError(f"Tyre ID {tyre_id} not found")
 
 
-# ─────────────────────────────────────────────
-# Strategy builder
-# ─────────────────────────────────────────────
-
 def build_lap_segments_for_weather(segments, level, compound, weather_name, car,
                                     entry_speed=0.0, timeline=None, lap_start_time=0.0):
-    """
-    Build segment actions for one lap.
-    Uses the WORST-CASE (most restrictive) accel/brake across possible weather windows
-    and the worst-case friction for corner speed calculations.
-    This ensures brake distances are always safe even if weather shifts mid-lap.
-    """
     all_conds_list = level["weather"]["conditions"]
     max_speed = car["max_speed_m/s"]
     crawl     = car["crawl_constant_m/s"]
 
-    # Use the dominant weather for this lap for friction calculation
     tyre_props = level["tyres"]["properties"][compound]
     friction   = tyre_friction_for(compound, weather_name, tyre_props)
 
-    # For braking distances, use the worst (lowest) accel/brake multipliers
-    # across all weather conditions — this is conservative and safe
-    worst_accel_mult  = min(c["acceleration_multiplier"] for c in all_conds_list)
-    worst_brake_mult  = min(c["deceleration_multiplier"] for c in all_conds_list)
-
-    # But also consider: if we know the dominant weather, use its multipliers
-    # as a balance between safety and speed. Use dominant weather multipliers.
     dom_cond = next((c for c in all_conds_list if c["condition"] == weather_name),
                     {"acceleration_multiplier": 1.0, "deceleration_multiplier": 1.0})
 
     accel      = car["accel_m/se2"]  * dom_cond["acceleration_multiplier"]
     brake_rate = car["brake_m/se2"]  * dom_cond["deceleration_multiplier"]
 
-    # For corner speeds, use the worst friction this compound could have
-    # across all possible weathers this lap (conservative)
-    worst_friction = friction  # default: use dominant weather friction
+    # Use the worst friction across all weathers that could hit during this lap —
+    # conservative corner speed limits keep us safe if conditions worsen mid-lap
+    worst_friction = friction
     if timeline is not None:
-        # Estimate which weathers could hit during this lap (rough: check ±200s window)
         for start, end, cond in timeline:
             if start > lap_start_time + 400:
                 break
@@ -386,7 +320,6 @@ def build_lap_segments_for_weather(segments, level, compound, weather_name, car,
     corner_max = {}
     for seg in segments:
         if seg["type"] == "corner":
-            # Use worst friction for safety
             corner_max[seg["id"]] = max_corner_speed(worst_friction, seg["radius_m"], crawl)
 
     lap_segs = []
@@ -409,19 +342,8 @@ def build_lap_segments_for_weather(segments, level, compound, weather_name, car,
     return lap_segs, corner_max
 
 
-# ─────────────────────────────────────────────
-# Weather-aware strategy optimizer
-# ─────────────────────────────────────────────
-
 def predict_lap_weather(level, timeline, lap_num, lap_time_estimate):
-    """
-    Estimate which weather will be dominant during a lap given
-    an approximate start time for that lap.
-    Returns the weather condition name.
-    """
-    # Estimate start time for this lap
     start_t = (lap_num - 1) * lap_time_estimate
-    # Check what weather is active at the midpoint of the lap
     mid_t = start_t + lap_time_estimate / 2
     cond = get_weather_at(timeline, mid_t)
     return cond["condition"]
@@ -433,16 +355,13 @@ def build_optimal_strategy(level):
     num_laps = level["race"]["laps"]
     timeline = build_weather_timeline(level)
 
-    # ── Step 1: estimate lap time per weather (for scheduling) ──
-    # Use a rough lap time based on track length / avg speed
     track_length = sum(s["length_m"] for s in segments)
-    rough_lap_time = track_length / 50.0  # rough 50 m/s average
+    rough_lap_time = track_length / 50.0
 
     print(f"Track length: {track_length}m  |  Rough lap time estimate: {rough_lap_time:.1f}s")
     print(f"Number of laps: {num_laps}")
     print()
 
-    # ── Step 2: determine weather per lap ──
     print("Weather forecast per lap:")
     lap_weathers = []
     for lap in range(1, num_laps + 1):
@@ -452,32 +371,24 @@ def build_optimal_strategy(level):
         print(f"  Lap {lap}: {w:12s} → best tyre: {best_c} (friction={best_f:.4f})")
     print()
 
-    # ── Step 3: determine pit stops ──
-    # Pit whenever the optimal tyre compound changes between laps
-    # Also track fuel and pit if needed
     used_tyre_ids = set()
 
-    # Initial tyre: best for lap 1 weather
     init_compound, init_tyre_id, _ = best_tyre_for_weather(lap_weathers[0], level, used_tyre_ids)
     used_tyre_ids.add(init_tyre_id)
     current_compound = init_compound
 
-    pit_plan = {}  # lap_num -> {tyre_change_set_id, fuel_refuel_amount_l}
-
-    # Track estimated fuel
+    pit_plan = {}
     fuel = car["initial_fuel_l"]
-    fuel_per_lap_est = track_length * K_BASE * 1.1  # rough estimate with some margin
+    fuel_per_lap_est = track_length * K_BASE * 1.1
 
     for lap in range(1, num_laps + 1):
         fuel -= fuel_per_lap_est
 
-        # Check if tyre compound should change next lap
         if lap < num_laps:
-            next_weather    = lap_weathers[lap]  # lap index = lap, since 0-indexed
+            next_weather    = lap_weathers[lap]  # lap is 1-indexed, so lap_weathers[lap] is next lap
             best_next_c, best_next_id, _ = best_tyre_for_weather(next_weather, level, used_tyre_ids)
             tyre_change_needed = best_next_c != current_compound
 
-            # Check if fuel will run out before next pit opportunity
             fuel_needed_next = fuel_per_lap_est * (num_laps - lap)
             refuel_needed    = max(0.0, fuel_needed_next - fuel)
             refuel_needed    = min(refuel_needed, car["fuel_tank_capacity_l"] - max(0, fuel))
@@ -495,7 +406,6 @@ def build_optimal_strategy(level):
                     fuel += refuel_needed
                     print(f"  Pit after lap {lap}: refuel {refuel_needed:.2f}L")
 
-    # ── Step 4: build full strategy ──
     laps_output = []
     current_compound = init_compound
     estimated_lap_time = rough_lap_time
@@ -518,7 +428,6 @@ def build_optimal_strategy(level):
                 pit_info["tyre_change_set_id"] = plan["tyre_change_set_id"]
             if "fuel_refuel_amount_l" in plan:
                 pit_info["fuel_refuel_amount_l"] = plan["fuel_refuel_amount_l"]
-            # Update compound for next lap
             if "compound" in plan:
                 current_compound = plan["compound"]
 
@@ -533,10 +442,6 @@ def build_optimal_strategy(level):
         "laps":            laps_output
     }
 
-
-# ─────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────
 
 def main():
     input_file  = sys.argv[1] if len(sys.argv) > 1 else "level3.json"
@@ -553,7 +458,6 @@ def main():
           f"brake={level['car']['brake_m/se2']} m/s²")
     print()
 
-    # Print weather schedule
     timeline = build_weather_timeline(level)
     print("Weather schedule:")
     for start, end, cond in timeline[:12]:

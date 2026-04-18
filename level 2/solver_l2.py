@@ -1,21 +1,9 @@
-"""
-Entelect Grand Prix - Level 2 Solver
-Extends Level 1 with:
-  - Full fuel consumption tracking (Kbase + Kdrag formula)
-  - Pit stop planning to avoid running out of fuel (limp mode)
-  - Fuel bonus optimization: stay as close to soft cap as possible
-  - Smart refuel amounts: only fill what's needed to avoid over-cap penalty
-"""
-
 import json
 import math
 import sys
 from copy import deepcopy
 from itertools import product as iterproduct
 
-# ─────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────
 GRAVITY     = 9.8
 K_STRAIGHT  = 0.0000166
 K_BRAKING   = 0.0398
@@ -38,10 +26,6 @@ WEATHER_KEY_MAP = {
     "heavy_rain": ("heavy_rain_friction_multiplier", "heavy_rain_degradation"),
 }
 
-
-# ─────────────────────────────────────────────
-# Physics helpers
-# ─────────────────────────────────────────────
 
 def accel_distance(vi, vf, a):
     if a == 0:
@@ -68,44 +52,27 @@ def max_corner_speed(friction, radius, crawl_speed):
     return math.sqrt(max(0, friction * GRAVITY * radius)) + crawl_speed
 
 
-# ─────────────────────────────────────────────
-# Fuel calculations
-# ─────────────────────────────────────────────
-
 def fuel_used(vi, vf, distance):
-    """Fuel consumed over a segment with initial speed vi, final speed vf, given distance."""
     avg_speed = (vi + vf) / 2
     return (K_BASE + K_DRAG * avg_speed**2) * distance
 
 def fuel_for_straight(entry_speed, target_speed, brake_start_m, seg_length, accel, brake_rate, max_speed):
-    """
-    Break the straight into 3 phases and sum fuel for each.
-    Phase 1: accelerate from entry_speed to effective_target
-    Phase 2: cruise at effective_target
-    Phase 3: brake from effective_target to exit_speed
-    """
     effective_target = min(max(target_speed, entry_speed), max_speed)
-    safe_exit = None  # computed below
 
     L = seg_length
-
-    # Phase 1: accelerate
     d_accel = accel_distance(entry_speed, effective_target, accel)
     if d_accel >= L:
-        # Can't reach target — entire straight is acceleration
         vf_actual = math.sqrt(max(0, entry_speed**2 + 2 * accel * L))
         vf_actual = min(vf_actual, max_speed)
         return fuel_used(entry_speed, vf_actual, L), vf_actual
 
-    # Phase 3: braking distance from target to exit
-    brake_pos = L - brake_start_m  # position from start where braking begins
-    d_brake_actual = L - brake_pos  # = brake_start_m
+    brake_pos = L - brake_start_m
+    d_brake_actual = L - brake_pos
 
     exit_speed = math.sqrt(max(0, effective_target**2 - 2 * brake_rate * d_brake_actual))
 
-    # Check if brake_start is before acceleration ends
     if brake_pos < d_accel:
-        # Braking starts during acceleration phase
+        # brake point lands inside the acceleration zone
         speed_at_brake_pos = math.sqrt(max(0, entry_speed**2 + 2 * accel * brake_pos))
         speed_at_brake_pos = min(speed_at_brake_pos, max_speed)
         d_brake_actual2 = L - brake_pos
@@ -123,13 +90,8 @@ def fuel_for_straight(entry_speed, target_speed, brake_start_m, seg_length, acce
     return f1 + f2 + f3, exit_speed
 
 def fuel_for_corner(speed, length):
-    """Constant speed through corner."""
     return fuel_used(speed, speed, length)
 
-
-# ─────────────────────────────────────────────
-# Straight simulation (time)
-# ─────────────────────────────────────────────
 
 def straight_exit_speed_and_time(seg, entry_speed, target_speed, brake_start_m,
                                   accel, brake_rate, max_speed):
@@ -162,10 +124,6 @@ def straight_exit_speed_and_time(seg, entry_speed, target_speed, brake_start_m,
 
     return exit_speed, t_accel + t_cruise + t_brake
 
-
-# ─────────────────────────────────────────────
-# Full race simulation with fuel tracking
-# ─────────────────────────────────────────────
 
 def simulate_race(level, strategy, verbose=False):
     car        = level["car"]
@@ -203,7 +161,6 @@ def simulate_race(level, strategy, verbose=False):
             seg = seg_map[seg_action["id"]]
 
             if in_limp:
-                # Travel entire segment at limp speed
                 t = time_at_constant(seg["length_m"], limp_speed)
                 f = fuel_used(limp_speed, limp_speed, seg["length_m"])
                 fuel_remaining -= f
@@ -266,7 +223,6 @@ def simulate_race(level, strategy, verbose=False):
                     status = "CRASH" if crashed else "OK"
                     print(f"  Seg {seg['id']} [corner r={seg['radius_m']}] entry={entry:.2f} max={max_c:.2f} {status} t={t:.2f}s fuel={f:.4f}L rem={fuel_remaining:.4f}L")
 
-        # Pit stop
         pit = lap_data.get("pit", {})
         if pit.get("enter", False):
             pit_time = level["race"]["base_pit_stop_time_s"]
@@ -282,7 +238,7 @@ def simulate_race(level, strategy, verbose=False):
                 pit_time += refuel / level["race"]["pit_refuel_rate_l/s"]
                 fuel_remaining = min(fuel_remaining + refuel, tank_capacity)
 
-            in_limp = False  # pit fixes limp mode
+            in_limp = False  # pitting resets limp mode
             total_time += pit_time
             current_speed = pit_exit_speed
 
@@ -292,19 +248,10 @@ def simulate_race(level, strategy, verbose=False):
     return total_time, total_fuel_used, crashes
 
 
-# ─────────────────────────────────────────────
-# Fuel estimator (no simulation, fast)
-# ─────────────────────────────────────────────
-
 def estimate_total_fuel(level, strategy):
-    """Quick fuel estimate without full simulation."""
     _, fuel_used_total, _ = simulate_race(level, strategy)
     return fuel_used_total
 
-
-# ─────────────────────────────────────────────
-# Scoring
-# ─────────────────────────────────────────────
 
 def score_level2(level, total_time, total_fuel_used):
     ref = level["race"]["time_reference_s"]
@@ -314,10 +261,6 @@ def score_level2(level, total_time, total_fuel_used):
     bonus = -500_000 * (1 - total_fuel_used / cap) ** 2 + 500_000
     return base, bonus, base + bonus
 
-
-# ─────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────
 
 def get_compound(level, tyre_id):
     for tyre_set in level["tyres"]["available_sets"]:
@@ -340,12 +283,12 @@ def get_weather_at_time(level, race_time):
 def compute_optimal_brake_start(seg, entry_speed, target_speed, corner_entry_speed,
                                  accel, brake_rate, max_speed):
     effective_target = min(max(target_speed, entry_speed), max_speed)
-    safe_corner_speed = max(0, corner_entry_speed - 0.001)
+    safe_corner_speed = max(0, corner_entry_speed - 0.001)  # tiny margin to avoid floating-point crashes
     d_brake = accel_distance(safe_corner_speed, effective_target, brake_rate)
     return min(d_brake, seg["length_m"])
 
 def chain_min_corner_speed(segments, start_idx, corner_max):
-    """Min max-speed across consecutive corners starting at start_idx."""
+    # chained corners share no braking room — must enter at the tightest limit
     speeds = []
     j = start_idx
     while j < len(segments) and segments[j]["type"] == "corner":
@@ -354,15 +297,7 @@ def chain_min_corner_speed(segments, start_idx, corner_max):
     return min(speeds) if speeds else 0.0
 
 
-# ─────────────────────────────────────────────
-# Strategy builder
-# ─────────────────────────────────────────────
-
 def build_lap_segments(segments, corner_max, car, target_speed_override=None):
-    """
-    Build the segment actions for one lap.
-    target_speed_override: if set, use this instead of max_speed for all straights.
-    """
     accel      = car["accel_m/se2"]
     brake_rate = car["brake_m/se2"]
     max_speed  = car["max_speed_m/s"]
@@ -372,8 +307,6 @@ def build_lap_segments(segments, corner_max, car, target_speed_override=None):
     for i, seg in enumerate(segments):
         if seg["type"] == "straight":
             t_speed = target_speed_override if target_speed_override else max_speed
-
-            # Required exit speed = min of chain of next corners
             chain_speed = chain_min_corner_speed(segments, i + 1, corner_max)
 
             brake_start = compute_optimal_brake_start(
@@ -392,18 +325,11 @@ def build_lap_segments(segments, corner_max, car, target_speed_override=None):
 
 
 def build_strategy(level, pit_laps, refuel_amounts, target_speed=None):
-    """
-    Build a complete race strategy.
-    pit_laps: list of lap numbers after which to pit (e.g. [1] = pit after lap 1)
-    refuel_amounts: dict {lap_num: litres}
-    target_speed: override speed for straights (None = max)
-    """
     car      = level["car"]
     segments = level["track"]["segments"]
     num_laps = level["race"]["laps"]
     weather  = get_weather_at_time(level, 0)
 
-    # Pick best tyre
     friction_key = WEATHER_KEY_MAP[weather][0]
     best_id, best_compound, best_friction = None, None, -1
     for tyre_set in level["tyres"]["available_sets"]:
@@ -438,12 +364,7 @@ def build_strategy(level, pit_laps, refuel_amounts, target_speed=None):
     return {"initial_tyre_id": best_id, "laps": laps}
 
 
-# ─────────────────────────────────────────────
-# Fuel optimizer
-# ─────────────────────────────────────────────
-
 def estimate_fuel_per_lap_at_speed(level, target_speed):
-    """Estimate fuel used per lap at a given target speed (no simulation, formula-based)."""
     car      = level["car"]
     segments = level["track"]["segments"]
     accel    = car["accel_m/se2"]
@@ -475,21 +396,12 @@ def estimate_fuel_per_lap_at_speed(level, target_speed):
             total_fuel  += f
             current_speed = exit_spd
         else:
-            entry = current_speed
-            total_fuel   += fuel_for_corner(entry, seg["length_m"])
-            # speed stays same
+            total_fuel   += fuel_for_corner(current_speed, seg["length_m"])
 
     return total_fuel
 
 
 def optimize_strategy(level):
-    """
-    Find the best strategy for Level 2:
-    1. Estimate fuel per lap at max speed
-    2. Determine if pit stop needed (fuel runs out mid-race)
-    3. Try different pit configurations and refuel amounts
-    4. Optimize target speed to hit soft cap closely for max fuel bonus
-    """
     car       = level["car"]
     num_laps  = level["race"]["laps"]
     soft_cap  = level["race"]["fuel_soft_cap_limit_l"]
@@ -498,36 +410,28 @@ def optimize_strategy(level):
 
     print(f"Fuel soft cap: {soft_cap:.1f}L  |  Tank: {tank:.1f}L  |  Initial: {init_fuel:.1f}L")
 
-    # Sweep target speeds to find one that uses fuel ≈ soft_cap
     best_score  = -float('inf')
     best_strat  = None
     best_time   = None
     best_fuel   = None
 
-    # Speed candidates: max down to crawl, step 5
     speed_candidates = list(range(int(car["max_speed_m/s"]), int(car["crawl_constant_m/s"]), -5))
 
     for tgt_speed in speed_candidates:
         fuel_per_lap = estimate_fuel_per_lap_at_speed(level, tgt_speed)
         total_est_fuel = fuel_per_lap * num_laps
-
-        # Determine if we need to pit for fuel
-        # Also check if we can start with enough fuel
         pit_needed = total_est_fuel > init_fuel
 
-        # Build candidate strategies
         candidates = []
 
         if not pit_needed:
-            # No pit stop needed
             strat = build_strategy(level, pit_laps=[], refuel_amounts={}, target_speed=tgt_speed)
             candidates.append(strat)
         else:
-            # Try pitting at end of each lap except the last
             for pit_after_lap in range(1, num_laps):
                 fuel_before_pit = fuel_per_lap * pit_after_lap
                 if fuel_before_pit > init_fuel:
-                    # Would run out before pit — skip
+                    # would run dry before reaching this pit stop
                     continue
                 fuel_after_pit   = fuel_per_lap * (num_laps - pit_after_lap)
                 refuel_needed    = max(0, fuel_after_pit - (init_fuel - fuel_before_pit))
@@ -548,16 +452,12 @@ def optimize_strategy(level):
                 best_time  = t
                 best_fuel  = fuel_used_actual
 
-        # Early exit if we found something decent near the cap
+        # fuel bonus is quadratic — within 5% of the cap is good enough
         if best_fuel is not None and abs(best_fuel - soft_cap) / soft_cap < 0.05:
             break
 
     return best_strat, best_time, best_fuel, best_score
 
-
-# ─────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────
 
 def main():
     input_file  = sys.argv[1] if len(sys.argv) > 1 else "level2.json"
