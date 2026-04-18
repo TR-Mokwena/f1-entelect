@@ -444,8 +444,10 @@ def build_optimal_strategy(level):
 
 
 def main():
-    input_file  = sys.argv[1] if len(sys.argv) > 1 else "level3.json"
-    output_file = sys.argv[2] if len(sys.argv) > 2 else "submission_l3.txt"
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    input_file  = sys.argv[1] if len(sys.argv) > 1 else os.path.join(script_dir, "level3.json")
+    output_file = sys.argv[2] if len(sys.argv) > 2 else os.path.join(script_dir, "3.txt")
 
     with open(input_file) as f:
         level = json.load(f)
