@@ -4,11 +4,8 @@ import sys
 from copy import deepcopy
 
 GRAVITY = 9.8
-K_STRAIGHT = 0.0000166
-K_BRAKING  = 0.0398
-K_CORNER   = 0.000265
-K_BASE     = 0.0005
-K_DRAG     = 0.0000000015
+K_BASE  = 0.0005
+K_DRAG  = 0.0000000015
 
 BASE_FRICTION = {
     "Soft":         1.8,
@@ -200,7 +197,7 @@ def _next_corner_max_speed(lap_segs, current_idx, seg_map, friction, crawl_speed
 
 
 def get_compound(level, tyre_id):
-    for tyre_set in level["tyres"]["available_sets"]:
+    for tyre_set in level["available_sets"]:
         if tyre_id in tyre_set["ids"]:
             return tyre_set["compound"]
     raise ValueError(f"Tyre ID {tyre_id} not found")
@@ -243,7 +240,7 @@ def build_optimal_strategy(level):
     friction_key = WEATHER_KEY_MAP[weather][0]
     best_tyre_id, best_compound, best_friction = None, None, -1
 
-    for tyre_set in level["tyres"]["available_sets"]:
+    for tyre_set in level["available_sets"]:
         compound = tyre_set["compound"]
         props = level["tyres"]["properties"][compound]
         f = BASE_FRICTION[compound] * props[friction_key]
@@ -321,7 +318,7 @@ def build_optimal_strategy(level):
 
 def main():
     input_file = sys.argv[1] if len(sys.argv) > 1 else "level1.json"
-    output_file = sys.argv[2] if len(sys.argv) > 2 else "submission.txt"
+    output_file = sys.argv[2] if len(sys.argv) > 2 else "1.txt"
 
     with open(input_file) as f:
         level = json.load(f)

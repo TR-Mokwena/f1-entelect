@@ -4,12 +4,9 @@ import sys
 from copy import deepcopy
 from itertools import product as iterproduct
 
-GRAVITY     = 9.8
-K_STRAIGHT  = 0.0000166
-K_BRAKING   = 0.0398
-K_CORNER    = 0.000265
-K_BASE      = 0.0005
-K_DRAG      = 0.0000000015
+GRAVITY = 9.8
+K_BASE  = 0.0005
+K_DRAG  = 0.0000000015
 
 BASE_FRICTION = {
     "Soft":         1.8,
@@ -137,9 +134,7 @@ def simulate_race(level, strategy, verbose=False):
     tank_capacity  = car["fuel_tank_capacity_l"]
 
     compound  = get_compound(level, strategy["initial_tyre_id"])
-    weather   = get_weather_at_time(level, 0)
     tyre_props = level["tyres"]["properties"][compound]
-    friction  = tyre_friction(compound, weather, tyre_props, 0.0)
 
     segments = level["track"]["segments"]
     seg_map  = {s["id"]: s for s in segments}
@@ -159,6 +154,8 @@ def simulate_race(level, strategy, verbose=False):
 
         for i, seg_action in enumerate(lap_segs):
             seg = seg_map[seg_action["id"]]
+            weather  = get_weather_at_time(level, total_time)
+            friction = tyre_friction(compound, weather, tyre_props, 0.0)
 
             if in_limp:
                 t = time_at_constant(seg["length_m"], limp_speed)
@@ -231,7 +228,6 @@ def simulate_race(level, strategy, verbose=False):
                 new_id = pit["tyre_change_set_id"]
                 compound   = get_compound(level, new_id)
                 tyre_props = level["tyres"]["properties"][compound]
-                friction   = tyre_friction(compound, weather, tyre_props, 0.0)
 
             refuel = pit.get("fuel_refuel_amount_l", 0)
             if refuel > 0:
