@@ -1,0 +1,189 @@
+{
+  "initial_tyre_id": 1,
+  "laps": [
+    {
+      "lap": 1,
+      "segments": [
+        {
+          "id": 1,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 164.2847
+        },
+        {
+          "id": 2,
+          "type": "corner"
+        },
+        {
+          "id": 3,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 171.5258
+        },
+        {
+          "id": 4,
+          "type": "corner"
+        },
+        {
+          "id": 5,
+          "type": "corner"
+        },
+        {
+          "id": 6,
+          "type": "corner"
+        },
+        {
+          "id": 7,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 154.9782
+        },
+        {
+          "id": 8,
+          "type": "corner"
+        }
+      ],
+      "pit": {
+        "enter": false
+      }
+    },
+    {
+      "lap": 2,
+      "segments": [
+        {
+          "id": 1,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 164.2847
+        },
+        {
+          "id": 2,
+          "type": "corner"
+        },
+        {
+          "id": 3,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 171.5258
+        },
+        {
+          "id": 4,
+          "type": "corner"
+        },
+        {
+          "id": 5,
+          "type": "corner"
+        },
+        {
+          "id": 6,
+          "type": "corner"
+        },
+        {
+          "id": 7,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 154.9782
+        },
+        {
+          "id": 8,
+          "type": "corner"
+        }
+      ],
+      "pit": {
+        "enter": false
+      }
+    },
+    {
+      "lap": 3,
+      "segments": [
+        {
+          "id": 1,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 205.3559
+        },
+        {
+          "id": 2,
+          "type": "corner"
+        },
+        {
+          "id": 3,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 214.4072
+        },
+        {
+          "id": 4,
+          "type": "corner"
+        },
+        {
+          "id": 5,
+          "type": "corner"
+        },
+        {
+          "id": 6,
+          "type": "corner"
+        },
+        {
+          "id": 7,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 193.7227
+        },
+        {
+          "id": 8,
+          "type": "corner"
+        }
+      ],
+      "pit": {
+        "enter": false
+      }
+    },
+    {
+      "lap": 4,
+      "segments": [
+        {
+          "id": 1,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 234.6925
+        },
+        {
+          "id": 2,
+          "type": "corner"
+        },
+        {
+          "id": 3,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 245.0368
+        },
+        {
+          "id": 4,
+          "type": "corner"
+        },
+        {
+          "id": 5,
+          "type": "corner"
+        },
+        {
+          "id": 6,
+          "type": "corner"
+        },
+        {
+          "id": 7,
+          "type": "straight",
+          "target_m/s": 90,
+          "brake_start_m_before_next": 221.3974
+        },
+        {
+          "id": 8,
+          "type": "corner"
+        }
+      ],
+      "pit": {
+        "enter": false
+      }
+    }
+  ]
+}
